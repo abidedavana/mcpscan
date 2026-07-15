@@ -6,11 +6,11 @@ The runner owns behaviors checks must not implement themselves:
   yields an NA finding (visible with ``--all``), not silence, so operators
   can see coverage, not just failures.
 * **Live-snapshot capture and gating** — with ``live=True`` the runner takes
-  one observation-only snapshot per stdio target (initialize + tools/list,
-  never tools/call) and hands it to ``requires_live`` checks. When there is
-  no snapshot — live not requested, the launch failed, or an HTTP target
-  (probe engine lands in milestone 4) — live checks report NA with the
-  reason instead of guessing.
+  one observation-only snapshot per target: a stdio handshake
+  (``snapshot_stdio``) or an HTTP probe (``probe_http``), never tools/call.
+  It hands the snapshot to ``requires_live`` checks. When there is no
+  snapshot — live not requested, or the launch/probe failed — those checks
+  report NA with the reason instead of guessing.
 * **Crash containment** — one buggy check must not kill the scan. An
   exception becomes an INFO finding naming the check, and the scan goes on.
 """
@@ -22,6 +22,7 @@ from collections.abc import Iterable
 from .checks import Check, all_checks
 from .checks.base import CheckResult
 from .findings import Finding, Verdict
+from .httpprobe import probe_http
 from .mcpclient import McpClientError, ServerSnapshot, snapshot_stdio
 from .target import ScanTarget
 
@@ -56,8 +57,11 @@ def scan(
                     snapshot = snapshot_stdio(target)
                 except McpClientError as e:
                     no_live_reason = f"live snapshot failed: {e}"
-            else:
-                no_live_reason = "live scan for HTTP transports lands with the probe engine (milestone 4)"
+            elif target.transport == "http":
+                try:
+                    snapshot = probe_http(target)
+                except McpClientError as e:
+                    no_live_reason = f"live probe failed: {e}"
 
         for check in check_list:
             if target.transport not in check.applies_to:

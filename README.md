@@ -33,11 +33,15 @@ and reports print it on every finding:
 
 ## Status
 
-8 of the 13 v0.1 checks implemented. **Static** checks read only the config; **live**
-checks need `--live` (one `initialize` + `tools/list` snapshot per stdio server).
+All 13 v0.1 checks implemented. **Static** checks read only the config. **Live** checks
+need `--live`: for stdio, one `initialize` + `tools/list` snapshot; for HTTP, a small set
+of observation-only requests (unauthenticated `initialize`/`tools/list`, an `initialize`
+with a foreign `Origin` header, and RFC 9728 well-known GETs — never `tools/call`, never a
+credential).
 
 | Check | Severity | Grounding | Input |
 |---|---|---|---|
+| `mcp_auth_token_not_in_url` | high | spec+inferred | static |
 | `mcp_secrets_no_hardcoded_in_config` | critical | spec+inferred | static |
 | `mcp_transport_tls_remote_http` | medium | inferred | static |
 | `mcp_transport_localhost_binding` (config half) | medium | spec | static |
@@ -45,16 +49,25 @@ checks need `--live` (one `initialize` + `tools/list` snapshot per stdio server)
 | `mcp_tools_capability_annotation_consistency` | high | inferred | live |
 | `mcp_schema_inputschema_valid` | medium | spec | live |
 | `mcp_schema_unconstrained_input_to_sink` | medium | inferred | live |
-| `mcp_transport_stdio_stdout_clean` | low | spec | live |
+| `mcp_transport_stdio_stdout_clean` | low | spec | live (stdio) |
+| `mcp_auth_unauthenticated_invocation` | critical | inferred | live (http) |
+| `mcp_auth_prm_discoverable` | medium | spec | live (http) |
+| `mcp_transport_origin_validation` | high | spec | live (http) |
+| `mcp_transport_session_id_quality` | medium | spec+inferred | live (http) |
 
-Remaining for the probe engine (milestone 4, HTTP): unauthenticated invocation, Protected
-Resource Metadata discovery, token-in-URL, Origin validation, session-ID quality. The full
-design, including checks deliberately excluded and the v0.2 growth path, is in
+The full design, including checks deliberately excluded and the v0.2 growth path, is in
 [CHECKS-v0.1.md](CHECKS-v0.1.md).
 
-Two runnable demo servers live under [tests/fixtures/servers/](tests/fixtures/servers/):
-`clean_server.py` (passes every live check) and `messy_server.py` (fails each one). Point
-mcpscan at either with `--live` to see the checks fire.
+Runnable demo servers live under [tests/fixtures/servers/](tests/fixtures/servers/):
+`clean_server.py` (passes every stdio live check) and `messy_server.py` (fails each one).
+Point mcpscan at either with `--live`. HTTP probe behavior is exercised by in-process
+fixtures in [tests/test_http_probe.py](tests/test_http_probe.py).
+
+**HTTP `--live` makes real requests.** Only scan HTTP endpoints you operate or are
+authorized to assess. The requests are non-invasive (read what the server volunteers), but
+they are real network calls. One honesty note: if an HTTP server requires auth, mcpscan
+can't retrieve its tool list without credentials, so the tool-surface / schema / annotation
+checks report PASS ("no tools observed") rather than a true assessment for that server.
 
 ## Development
 

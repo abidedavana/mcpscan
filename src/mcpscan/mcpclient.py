@@ -41,8 +41,42 @@ class McpClientError(RuntimeError):
 
 
 @dataclass
+class HttpProbe:
+    """Signals from benign, observation-only HTTP requests to an MCP endpoint.
+
+    Populated by :func:`mcpscan.httpprobe.probe_http`; empty for stdio
+    targets. Every request behind these fields is non-invasive: an
+    unauthenticated initialize / tools/list, an initialize carrying a foreign
+    Origin header, a second initialize (to compare session IDs), and
+    well-known metadata GETs. No credential is ever sent and no tools/call is
+    ever issued.
+    """
+
+    reachable: bool = False
+    endpoint_loopback: bool = False
+    # Unauthenticated invocation:
+    unauth_status: int | None = None          # HTTP status of the unauth tools/list (or the initialize that gated it)
+    unauth_returned_result: bool = False      # did an unauthenticated tools/list yield a JSON-RPC result?
+    # Protected Resource Metadata discovery (RFC 9728), only meaningful on 401:
+    www_authenticate: str | None = None
+    prm_discovered: bool = False
+    prm_authorization_servers: list = field(default_factory=list)
+    # Origin validation:
+    foreign_origin_status: int | None = None  # status when a foreign Origin header was sent
+    # Session-ID quality (from initialize responses):
+    session_id: str | None = None
+    session_id_2: str | None = None
+
+
+@dataclass
 class ServerSnapshot:
-    """Everything one non-invasive live pass observed about a server."""
+    """Everything one non-invasive live pass observed about a server.
+
+    Shared container for both transports: the tool-list fields
+    (``tools`` / ``instructions`` / ``server_info``) are filled for stdio and,
+    when obtainable, for HTTP; ``stdout_noise`` is stdio-only; ``http`` holds
+    the HTTP probe signals and is None for stdio.
+    """
 
     protocol_version: str | None = None
     server_info: dict = field(default_factory=dict)
@@ -51,6 +85,8 @@ class ServerSnapshot:
     tools: list[dict] = field(default_factory=list)
     #: Raw stdout lines that were not valid MCP messages (spec MUST NOT).
     stdout_noise: list[str] = field(default_factory=list)
+    #: HTTP probe observations; None for stdio targets.
+    http: HttpProbe | None = None
 
 
 class _LineReader:

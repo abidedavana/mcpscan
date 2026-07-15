@@ -24,27 +24,29 @@ Live (snapshot):
   which the spec permits). The client collects offending lines as
   ``ServerSnapshot.stdout_noise`` while driving initialize + tools/list.
 
-Still to come (probe engine, milestone 4): Origin validation, session-ID
-quality.
+* ``mcp_transport_origin_validation`` — a Streamable HTTP server that
+  processes a request bearing a foreign Origin header. Grounding: **spec**
+  ("Servers MUST validate the Origin header on all incoming connections";
+  "if present and invalid, servers MUST respond with HTTP 403 Forbidden").
+
+* ``mcp_transport_session_id_quality`` — an issued MCP-Session-Id that is
+  outside visible ASCII, low-entropy, or sequential across two handshakes.
+  Grounding: **spec+inferred** (charset MUST and "secure, non-deterministic
+  session IDs" MUST are spec; the entropy threshold and sequential heuristic
+  are inferred).
 """
 
 from __future__ import annotations
 
-import ipaddress
+import math
+from collections import Counter
 from urllib.parse import urlsplit
 
 from ..findings import Grounding, Severity, Verdict
 from ..mcpclient import ServerSnapshot
+from ..netutil import is_loopback_host as _is_loopback_host
 from ..target import ScanTarget
 from .base import Check, CheckResult, register
-
-
-def _is_loopback_host(host: str) -> bool:
-    h = host.strip().lower().strip("[]")
-    try:
-        return ipaddress.ip_address(h).is_loopback
-    except ValueError:
-        return h == "localhost" or h.endswith(".localhost")
 
 
 @register
@@ -150,3 +152,97 @@ class StdioStdoutClean(Check):
             Verdict.FAIL,
             f"{len(noise)} non-protocol line(s) on stdout during the handshake: {shown}{more}",
         )
+
+
+@register
+class OriginValidation(Check):
+    id = "mcp_transport_origin_validation"
+    title = "HTTP server must validate the Origin header"
+    severity = Severity.HIGH
+    grounding = Grounding.SPEC
+    applies_to = ("http",)
+    requires_live = True
+    remediation = (
+        "Validate the Origin header on every incoming connection against an allowlist "
+        "of expected origins; respond 403 to a present-but-invalid Origin. This is the "
+        "primary DNS-rebinding defense for local HTTP servers."
+    )
+
+    def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
+        probe = snapshot.http if snapshot else None
+        if probe is None or probe.foreign_origin_status is None:
+            return CheckResult(Verdict.INFO, "could not test Origin validation (no response to the foreign-Origin probe)")
+        status = probe.foreign_origin_status
+        if status == 200:
+            return CheckResult(
+                Verdict.FAIL,
+                "processed a request bearing a foreign Origin header (HTTP 200): the DNS-rebinding "
+                "hole behind CVE-2025-49596",
+            )
+        if status == 403:
+            return CheckResult(Verdict.PASS, "rejected a foreign Origin header with HTTP 403")
+        return CheckResult(
+            Verdict.INFO,
+            f"a foreign Origin header got HTTP {status}; could not confirm Origin validation "
+            "(possibly auth-gated before the Origin check)",
+        )
+
+
+def _total_entropy_bits(s: str) -> float:
+    if not s:
+        return 0.0
+    counts = Counter(s)
+    n = len(s)
+    per_char = -sum((c / n) * math.log2(c / n) for c in counts.values())
+    return per_char * n
+
+
+def _looks_sequential(a: str, b: str) -> bool:
+    """True if two successive session IDs differ only by a small increment."""
+    if not a or not b or a == b:
+        return False
+    if a.isdigit() and b.isdigit():
+        return abs(int(a) - int(b)) <= 4
+    i = 0
+    while i < min(len(a), len(b)) and a[i] == b[i]:
+        i += 1
+    tail_a, tail_b = a[i:], b[i:]
+    if tail_a.isdigit() and tail_b.isdigit() and len(tail_a) == len(tail_b):
+        return abs(int(tail_a) - int(tail_b)) <= 4
+    return False
+
+
+@register
+class SessionIdQuality(Check):
+    id = "mcp_transport_session_id_quality"
+    title = "HTTP session IDs must be well-formed, non-guessable, and not used as auth"
+    severity = Severity.MEDIUM
+    grounding = Grounding.SPEC_INFERRED
+    applies_to = ("http",)
+    requires_live = True
+    remediation = (
+        "Generate session IDs with a CSPRNG (e.g. a securely generated UUIDv4), using "
+        "only visible ASCII (0x21-0x7E). Never treat a session ID as authentication - "
+        "verify a credential on every request, and bind the session to user identity "
+        "derived from the token (e.g. <user_id>:<session_id>)."
+    )
+
+    def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
+        probe = snapshot.http if snapshot else None
+        if probe is None:
+            return CheckResult(Verdict.INFO, "endpoint could not be probed")
+        sid = probe.session_id
+        if not sid:
+            return CheckResult(Verdict.NA, "server issues no MCP-Session-Id")
+        issues = []
+        if not all(0x21 <= ord(c) <= 0x7E for c in sid):
+            issues.append("contains characters outside visible ASCII 0x21-0x7E (spec violation)")
+        bits = _total_entropy_bits(sid)
+        if bits < 64:
+            issues.append(f"low estimated entropy (~{bits:.0f} bits over {len(sid)} chars)")
+        if _looks_sequential(sid, probe.session_id_2 or ""):
+            issues.append("successive session IDs look sequential/predictable")
+        redacted = f"{sid[:4]}... ({len(sid)} chars)"
+        if issues:
+            return CheckResult(Verdict.FAIL, f"session ID {redacted}: " + "; ".join(issues))
+        return CheckResult(Verdict.PASS, f"session ID {redacted} is visible-ASCII, high-entropy, and non-sequential")
