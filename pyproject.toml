@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcpscan"
+version = "0.1.0"
+description = "Defensive posture scanner for MCP servers: spec-grounded misconfiguration checks with PASS/FAIL verdicts and exact remediations. Detection only — no exploitation."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "The mcpscan Authors" }]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "security",
+    "scanner",
+    "posture",
+    "misconfiguration",
+    "hardening",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+# Zero runtime dependencies by design: milestone 1-2 checks read JSON configs
+# with the stdlib only. The MCP client (tools/list + probe checks) will land
+# behind an optional extra so the static scanner stays dependency-free.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+mcpscan = "mcpscan.cli:main_entry"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcpscan"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

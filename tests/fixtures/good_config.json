@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "files": {
+      "command": "npx",
+      "args": ["-y", "@example/files-server"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "search": {
+      "url": "https://search.example.com/mcp",
+      "x-mcpscan": { "scope": "remote" }
+    }
+  }
+}

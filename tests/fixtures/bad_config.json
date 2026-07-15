@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "files": {
+      "command": "npx",
+      "args": ["-y", "@example/files-server", "--api-key=sk-live-abcdefghijklmnop1234"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
+      },
+      "x-mcpscan": { "scope": "local" }
+    },
+    "search": {
+      "url": "http://search.internal.example:8080/mcp",
+      "x-mcpscan": { "scope": "local", "bind_host": "0.0.0.0" }
+    }
+  }
+}
