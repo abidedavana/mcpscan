@@ -26,7 +26,7 @@ from .target import ConfigError, load_targets
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mcpscan",
-        description="Defensive posture scanner for MCP servers — detection and remediation only.",
+        description="Defensive posture scanner for MCP servers - detection and remediation only.",
     )
     parser.add_argument("--version", action="version", version=f"mcpscan {__version__} (spec {SPEC_VERSION})")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -34,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
     scan_p = sub.add_parser("scan", help="scan the servers in a client-style JSON config")
     scan_p.add_argument("--config", required=True, help="path to a config with an mcpServers mapping")
     scan_p.add_argument("--server", action="append", default=None, help="only scan this server name (repeatable)")
+    scan_p.add_argument(
+        "--live",
+        action="store_true",
+        help="launch each stdio server and take an observation-only snapshot (initialize + "
+        "tools/list, never tools/call) to run the live checks",
+    )
     scan_p.add_argument("--json", action="store_true", dest="as_json", help="emit a machine-readable JSON report")
     scan_p.add_argument("--all", action="store_true", dest="show_all", help="also show NA findings in console output")
 
@@ -54,7 +60,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             return 2
         targets = [t for t in targets if t.name in set(args.server)]
 
-    findings = scan(targets)
+    findings = scan(targets, live=args.live)
     print(to_json(findings) if args.as_json else render_console(findings, show_all=args.show_all))
     return 1 if any(f.verdict is Verdict.FAIL for f in findings) else 0
 

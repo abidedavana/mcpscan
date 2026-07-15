@@ -6,13 +6,19 @@ misconfigurations and reports PASS / FAIL / INFO / NA with the exact fix. Detect
 remediation only — no exploitation, no attack generation.
 
 ```
-mcpscan scan --config claude_desktop_config.json
-mcpscan scan --config .mcp.json --json     # machine-readable, CI-friendly exit codes
-mcpscan checks                             # list the implemented checks
+mcpscan scan --config claude_desktop_config.json          # static checks (no server launched)
+mcpscan scan --config claude_desktop_config.json --live   # also launch stdio servers for the live checks
+mcpscan scan --config .mcp.json --json                    # machine-readable, CI-friendly exit codes
+mcpscan checks                                            # list the implemented checks
 ```
 
 Exit codes: `0` clean, `1` at least one FAIL, `2` usage/config error. INFO findings never
 fail the build — they are review flags, not verdicts.
+
+**Static vs `--live`.** Without `--live`, mcpscan only reads the config — it never launches
+anything. With `--live`, it launches each stdio server and takes one **observation-only**
+snapshot (`initialize` + `tools/list`, never `tools/call`) to run the checks that need the
+server's advertised tool surface. A posture scan never invokes a tool.
 
 ## Grounding honesty
 
@@ -27,18 +33,28 @@ and reports print it on every finding:
 
 ## Status
 
-v0.1 engine with the config-only checks implemented:
+8 of the 13 v0.1 checks implemented. **Static** checks read only the config; **live**
+checks need `--live` (one `initialize` + `tools/list` snapshot per stdio server).
 
-| Check | Severity | Grounding |
-|---|---|---|
-| `mcp_secrets_no_hardcoded_in_config` | critical | spec+inferred |
-| `mcp_transport_tls_remote_http` | medium | inferred |
-| `mcp_transport_localhost_binding` (config half) | medium | spec |
+| Check | Severity | Grounding | Input |
+|---|---|---|---|
+| `mcp_secrets_no_hardcoded_in_config` | critical | spec+inferred | static |
+| `mcp_transport_tls_remote_http` | medium | inferred | static |
+| `mcp_transport_localhost_binding` (config half) | medium | spec | static |
+| `mcp_secrets_not_in_tool_surface` | medium | inferred | live |
+| `mcp_tools_capability_annotation_consistency` | high | inferred | live |
+| `mcp_schema_inputschema_valid` | medium | spec | live |
+| `mcp_schema_unconstrained_input_to_sink` | medium | inferred | live |
+| `mcp_transport_stdio_stdout_clean` | low | spec | live |
 
-Next milestones: `tools/list` static checks (schemas, annotations, tool-surface secrets),
-then the handshake/probe checks (unauthenticated invocation, Origin validation, session-ID
-quality, stdio stdout hygiene). The full design, including checks deliberately excluded
-and the v0.2 growth path, is in [CHECKS-v0.1.md](CHECKS-v0.1.md).
+Remaining for the probe engine (milestone 4, HTTP): unauthenticated invocation, Protected
+Resource Metadata discovery, token-in-URL, Origin validation, session-ID quality. The full
+design, including checks deliberately excluded and the v0.2 growth path, is in
+[CHECKS-v0.1.md](CHECKS-v0.1.md).
+
+Two runnable demo servers live under [tests/fixtures/servers/](tests/fixtures/servers/):
+`clean_server.py` (passes every live check) and `messy_server.py` (fails each one). Point
+mcpscan at either with `--live` to see the checks fire.
 
 ## Development
 

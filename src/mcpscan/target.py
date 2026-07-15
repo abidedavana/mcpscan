@@ -99,7 +99,9 @@ def load_targets(path: str | Path) -> list[ScanTarget]:
     Accepts either the standard ``{"mcpServers": {...}}`` wrapper or a bare
     ``{name: entry}`` mapping whose entries look like server definitions.
     """
-    raw = Path(path).read_text(encoding="utf-8")
+    # utf-8-sig: transparently strips a UTF-8 BOM if present (Windows editors
+    # and PowerShell's Out-File add one) and reads plain UTF-8 unchanged.
+    raw = Path(path).read_text(encoding="utf-8-sig")
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:

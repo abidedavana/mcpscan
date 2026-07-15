@@ -1,18 +1,30 @@
-"""Category 2 — secrets exposure. Catalogue check: mcp_secrets_no_hardcoded_in_config.
+"""Category 2 — secrets exposure.
 
-Two confidence tiers, mapped to two verdicts:
+Two checks share one detector:
 
-* **Known signature** (vendor key prefixes, ``Bearer <literal>``, private-key
-  blocks) → FAIL. These are unambiguous.
-* **Entropy-only** (a secret-*shaped* high-entropy token with no recognizable
-  prefix) → INFO, because entropy heuristics have false positives and the
-  catalogue reserves INFO for findings that need operator judgement.
+* ``mcp_secrets_no_hardcoded_in_config`` (static) — literal credentials in
+  the config's ``env`` values or ``args``.
+* ``mcp_secrets_not_in_tool_surface`` (live) — credentials in what the
+  server *advertises to every client*: tool descriptions, schema literals
+  (``default`` / ``const`` / ``examples``), the initialize ``instructions``,
+  and ``serverInfo`` strings. Distinct from runtime-traffic secret scanners
+  (mcp-scan proxy, Docker --block-secrets): this is a static scan of the
+  advertised surface, taken from one observation-only snapshot.
 
-The catalogue's fail_when/info_when for this check overlap on argv; this
-module resolves it by confidence tier (signature → FAIL, entropy → INFO)
-regardless of location, and appends the argv-exposure note whenever a match
-sits in ``args`` — argv is readable by other local processes via the process
-table, which makes it *worse* than env, never softer.
+The detector has two confidence tiers, mapped to two verdicts:
+
+* **Known signature** (vendor key prefixes, ``Bearer <literal>``,
+  private-key blocks) → FAIL. These are unambiguous.
+* **Entropy-only** (a secret-*shaped* high-entropy token with no
+  recognizable prefix) → INFO, because entropy heuristics have false
+  positives and the catalogue reserves INFO for findings that need operator
+  judgement.
+
+The catalogue's fail_when/info_when for the config check overlap on argv;
+this module resolves it by confidence tier (signature → FAIL, entropy →
+INFO) regardless of location, and appends the argv-exposure note whenever a
+match sits in ``args`` — argv is readable by other local processes via the
+process table, which makes it *worse* than env, never softer.
 
 Reference forms are never flagged: ``${VAR}`` / ``$VAR`` / ``%VAR%``
 indirection, secret-manager URIs, and ``<placeholder>`` values.
@@ -26,8 +38,10 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from collections.abc import Iterable, Iterator
 
 from ..findings import Grounding, Severity, Verdict
+from ..mcpclient import ServerSnapshot
 from ..target import ScanTarget
 from .base import Check, CheckResult, register
 
@@ -91,6 +105,54 @@ def _redact(value: str) -> str:
     return f"{v[:4]}... ({len(v)} chars)"
 
 
+def find_secret_hits(locations: Iterable[tuple[str, str]]) -> tuple[list[str], list[str], set[str]]:
+    """Scan (where, value) pairs. Returns (signature_hits, entropy_hits, hit_wheres)."""
+    signature_hits: list[str] = []
+    entropy_hits: list[str] = []
+    hit_wheres: set[str] = set()
+    for where, value in locations:
+        if not isinstance(value, str) or _is_reference(value):
+            continue
+        matched = False
+        for label, pattern in _KNOWN_SIGNATURES:
+            m = pattern.search(value)
+            if m:
+                signature_hits.append(f"{label} in {where}: {_redact(m.group(0))}")
+                matched = True
+                break
+        if not matched and _looks_high_entropy(value):
+            entropy_hits.append(f"secret-shaped high-entropy value in {where}: {_redact(value)}")
+            matched = True
+        if matched:
+            hit_wheres.add(where)
+    return signature_hits, entropy_hits, hit_wheres
+
+
+def _iter_schema_literals(prefix: str, node: object) -> Iterator[tuple[str, str]]:
+    """Yield (where, value) for every string literal a schema embeds.
+
+    Literals are the fields a schema can smuggle a credential in: ``default``,
+    ``const``, and ``examples`` entries, at any nesting depth.
+    """
+    if isinstance(node, dict):
+        for key in ("default", "const"):
+            v = node.get(key)
+            if isinstance(v, str):
+                yield f"{prefix}.{key}", v
+        ex = node.get("examples")
+        if isinstance(ex, list):
+            for i, v in enumerate(ex):
+                if isinstance(v, str):
+                    yield f"{prefix}.examples[{i}]", v
+        for k, v in node.items():
+            if k != "examples" and isinstance(v, (dict, list)):
+                yield from _iter_schema_literals(f"{prefix}.{k}", v)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            if isinstance(v, (dict, list)):
+                yield from _iter_schema_literals(f"{prefix}[{i}]", v)
+
+
 @register
 class SecretsInConfig(Check):
     id = "mcp_secrets_no_hardcoded_in_config"
@@ -106,32 +168,14 @@ class SecretsInConfig(Check):
         "plaintext."
     )
 
-    def run(self, target: ScanTarget) -> CheckResult:
+    def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
         locations: list[tuple[str, str]] = [(f"env[{k}]", v) for k, v in target.env.items()]
         locations += [(f"args[{i}]", a) for i, a in enumerate(target.args)]
-
-        signature_hits: list[str] = []
-        entropy_hits: list[str] = []
-        argv_hit = False
-        for where, value in locations:
-            if _is_reference(value):
-                continue
-            matched = False
-            for label, pattern in _KNOWN_SIGNATURES:
-                m = pattern.search(value)
-                if m:
-                    signature_hits.append(f"{label} in {where}: {_redact(m.group(0))}")
-                    matched = True
-                    break
-            if not matched and _looks_high_entropy(value):
-                entropy_hits.append(f"secret-shaped high-entropy value in {where}: {_redact(value)}")
-                matched = True
-            if matched and where.startswith("args["):
-                argv_hit = True
+        signature_hits, entropy_hits, hit_wheres = find_secret_hits(locations)
 
         argv_note = (
             "; note: values in argv are visible to any local process via the process table"
-            if argv_hit
+            if any(w.startswith("args[") for w in hit_wheres)
             else ""
         )
         if signature_hits:
@@ -142,3 +186,48 @@ class SecretsInConfig(Check):
                 "; ".join(entropy_hits) + argv_note + "; verify: if it is a credential, move it to a reference and rotate it",
             )
         return CheckResult(Verdict.PASS, "no literal credentials found in env or args")
+
+
+@register
+class SecretsInToolSurface(Check):
+    id = "mcp_secrets_not_in_tool_surface"
+    title = "No secrets exposed in tool definitions, schemas, or server instructions"
+    severity = Severity.MEDIUM
+    grounding = Grounding.INFERRED
+    applies_to = ("stdio", "http")
+    requires_live = True
+    remediation = (
+        "Strip credentials from tool descriptions, schema literals, and the initialize "
+        "instructions; supply secrets to the server at runtime via env / a secret "
+        "manager, never inline in metadata the server advertises to every client. "
+        "Rotate any exposed secret."
+    )
+
+    def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
+        assert snapshot is not None  # runner guarantees this for requires_live
+        locations: list[tuple[str, str]] = []
+        if snapshot.instructions:
+            locations.append(("initialize.instructions", snapshot.instructions))
+        locations += [
+            (f"serverInfo.{k}", v) for k, v in snapshot.server_info.items() if isinstance(v, str)
+        ]
+        for tool in snapshot.tools:
+            name = tool.get("name", "?")
+            desc = tool.get("description")
+            if isinstance(desc, str):
+                locations.append((f"tool[{name}].description", desc))
+            for schema_key in ("inputSchema", "outputSchema"):
+                locations.extend(_iter_schema_literals(f"tool[{name}].{schema_key}", tool.get(schema_key)))
+
+        signature_hits, entropy_hits, _ = find_secret_hits(locations)
+        if signature_hits:
+            return CheckResult(Verdict.FAIL, "; ".join(signature_hits + entropy_hits))
+        if entropy_hits:
+            return CheckResult(
+                Verdict.INFO,
+                "; ".join(entropy_hits) + "; verify: if it is a credential, remove it from the advertised surface and rotate it",
+            )
+        return CheckResult(
+            Verdict.PASS,
+            f"no secret-shaped values in instructions, serverInfo, or {len(snapshot.tools)} tool definition(s)",
+        )

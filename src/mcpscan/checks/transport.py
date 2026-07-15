@@ -1,4 +1,6 @@
-"""Category 5 — transport security, the two config-only checks.
+"""Category 5 — transport security.
+
+Static (config-only):
 
 * ``mcp_transport_tls_remote_http`` — plaintext ``http://`` to a non-loopback
   host. Grounding: **inferred**. Verified against the live 2025-11-25 spec:
@@ -11,12 +13,19 @@
   ``0.0.0.0`` / ``::`` / a routable interface. Grounding: **spec** ("When
   running locally, servers SHOULD bind only to localhost (127.0.0.1) rather
   than all network interfaces (0.0.0.0)", basic/transports Security Warning).
-  This milestone evaluates the operator-declared ``x-mcpscan.bind_host``;
-  runtime detection lands with the probe engine.
+  Evaluates the operator-declared ``x-mcpscan.bind_host``; runtime detection
+  lands with the probe engine.
 
-The remaining transport checks in the catalogue (Origin validation, stdio
-stdout hygiene, session-ID quality) need a live handshake or probe and land
-in milestones 3-4.
+Live (snapshot):
+
+* ``mcp_transport_stdio_stdout_clean`` — non-protocol output on stdout during
+  the handshake. Grounding: **spec** ("The server MUST NOT write anything to
+  its stdout that is not a valid MCP message"; logging belongs on stderr,
+  which the spec permits). The client collects offending lines as
+  ``ServerSnapshot.stdout_noise`` while driving initialize + tools/list.
+
+Still to come (probe engine, milestone 4): Origin validation, session-ID
+quality.
 """
 
 from __future__ import annotations
@@ -25,6 +34,7 @@ import ipaddress
 from urllib.parse import urlsplit
 
 from ..findings import Grounding, Severity, Verdict
+from ..mcpclient import ServerSnapshot
 from ..target import ScanTarget
 from .base import Check, CheckResult, register
 
@@ -51,7 +61,7 @@ class TlsRemoteHttp(Check):
         "itself.)"
     )
 
-    def run(self, target: ScanTarget) -> CheckResult:
+    def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
         parts = urlsplit(target.url or "")
         scheme = parts.scheme.lower()
         host = (parts.hostname or "").lower()
@@ -83,7 +93,7 @@ class LocalhostBinding(Check):
         "authentication and TLS, and restrict source addresses."
     )
 
-    def run(self, target: ScanTarget) -> CheckResult:
+    def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
         if target.scope == "remote":
             return CheckResult(
                 Verdict.NA,
@@ -110,6 +120,33 @@ class LocalhostBinding(Check):
             )
         return CheckResult(
             Verdict.INFO,
-            f"non-loopback bind {bind!r} with undeclared scope — set x-mcpscan.scope to "
+            f"non-loopback bind {bind!r} with undeclared scope - set x-mcpscan.scope to "
             "'local' (then this is a finding) or 'remote' (then front it with auth + TLS)",
+        )
+
+
+@register
+class StdioStdoutClean(Check):
+    id = "mcp_transport_stdio_stdout_clean"
+    title = "stdio server must emit only protocol messages on stdout"
+    severity = Severity.LOW
+    grounding = Grounding.SPEC
+    applies_to = ("stdio",)
+    requires_live = True
+    remediation = (
+        "Route all logging and diagnostics to stderr (which the spec permits for "
+        "logging); keep stdout exclusively for newline-delimited MCP messages with no "
+        "embedded newlines."
+    )
+
+    def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
+        assert snapshot is not None
+        noise = snapshot.stdout_noise
+        if not noise:
+            return CheckResult(Verdict.PASS, "stdout carried only valid MCP messages during the handshake")
+        shown = "; ".join(repr(line[:60]) for line in noise[:3])
+        more = f" (+{len(noise) - 3} more line(s))" if len(noise) > 3 else ""
+        return CheckResult(
+            Verdict.FAIL,
+            f"{len(noise)} non-protocol line(s) on stdout during the handshake: {shown}{more}",
         )

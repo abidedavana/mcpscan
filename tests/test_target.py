@@ -63,6 +63,14 @@ def test_bad_scope_rejected(tmp_path):
         load_targets(p)
 
 
+def test_utf8_bom_config_is_tolerated(tmp_path):
+    # Windows editors / PowerShell Out-File prepend a UTF-8 BOM; it must not break parsing.
+    p = tmp_path / "config.json"
+    p.write_bytes(b"\xef\xbb\xbf" + json.dumps({"mcpServers": {"x": {"url": "https://a/mcp"}}}).encode("utf-8"))
+    (target,) = load_targets(p)
+    assert target.name == "x"
+
+
 def test_invalid_json_rejected(tmp_path):
     p = tmp_path / "config.json"
     p.write_text("{not json", encoding="utf-8")

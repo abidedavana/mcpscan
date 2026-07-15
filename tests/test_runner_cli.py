@@ -29,7 +29,7 @@ def test_runner_contains_check_crashes():
         applies_to = ("stdio", "http")
         remediation = "n/a"
 
-        def run(self, target):
+        def run(self, target, snapshot=None):
             raise RuntimeError("boom")
 
     (finding,) = scan([ScanTarget(name="s", transport="stdio", command="npx")], checks=[Exploding()])
