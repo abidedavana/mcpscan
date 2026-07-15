@@ -15,10 +15,70 @@ mcpscan checks                                            # list the implemented
 Exit codes: `0` clean, `1` at least one FAIL, `2` usage/config error. INFO findings never
 fail the build — they are review flags, not verdicts.
 
+> Why this exists and how it's designed: [docs/WRITEUP.md](docs/WRITEUP.md).
+
 **Static vs `--live`.** Without `--live`, mcpscan only reads the config — it never launches
 anything. With `--live`, it launches each stdio server and takes one **observation-only**
 snapshot (`initialize` + `tools/list`, never `tools/call`) to run the checks that need the
 server's advertised tool surface. A posture scan never invokes a tool.
+
+## Demo
+
+Scanning a deliberately misconfigured stdio server ([messy_server.py](tests/fixtures/servers/messy_server.py)).
+Every FAIL/INFO also prints `grounding:` and a `fix:` line; a few are trimmed below for
+brevity.
+
+```console
+$ mcpscan scan --config claude_desktop_config.json --live
+
+mcpscan 0.1.0 - 1 server(s), 13 check(s), spec 2025-11-25
+
+server: notes
+  [PASS] critical mcp_secrets_no_hardcoded_in_config
+          no literal credentials found in env or args
+  [FAIL] medium   mcp_secrets_not_in_tool_surface
+          GitHub token in initialize.instructions: ghp_... (40 chars)
+          grounding: inferred
+          fix: Strip credentials from tool descriptions, schema literals, and the
+               initialize instructions; supply secrets at runtime via env / a secret
+               manager. Rotate any exposed secret.
+  [FAIL] medium   mcp_schema_inputschema_valid
+          tool 'broken_tool': inputSchema is str, not an object
+          grounding: spec
+  [INFO] medium   mcp_schema_unconstrained_input_to_sink
+          tool 'run_shell': unconstrained string parameter(s) command; tool 'fetch_url':
+          unconstrained string parameter(s) url
+          grounding: inferred
+  [FAIL] high     mcp_tools_capability_annotation_consistency
+          tool 'run_shell' looks dangerous (shell) but declares no annotations; tool
+          'delete_record' declares destructiveHint:false but looks destructive (delete)
+          grounding: inferred
+  [FAIL] low      mcp_transport_stdio_stdout_clean
+          1 non-protocol line(s) on stdout during the handshake: 'messy-fixture v0.1.0...'
+          grounding: spec
+
+summary: 4 FAIL, 1 INFO, 1 PASS, 7 NA
+```
+
+Scanning a networked HTTP endpoint runs the probe checks (`--live`, observation-only requests):
+
+```console
+$ mcpscan scan --config mcp.json --live        # url: http://127.0.0.1:9765/mcp
+
+server: demo-http
+  [INFO] critical mcp_auth_unauthenticated_invocation
+          unauthenticated tools/list returned results, but the endpoint is loopback-only
+  [FAIL] high     mcp_transport_origin_validation
+          processed a request bearing a foreign Origin header (HTTP 200): the DNS-rebinding
+          hole behind CVE-2025-49596
+          grounding: spec
+  [PASS] medium   mcp_transport_session_id_quality
+          session ID ab60... (32 chars) is visible-ASCII, high-entropy, and non-sequential
+  [NA  ] medium   mcp_auth_prm_discoverable
+          no auth challenge to advertise (unauthenticated request returned HTTP 200, not 401)
+
+summary: 1 FAIL, 1 INFO, 8 PASS, 3 NA
+```
 
 ## Grounding honesty
 
