@@ -83,6 +83,11 @@ class ServerSnapshot:
     instructions: str | None = None
     capabilities: dict = field(default_factory=dict)
     tools: list[dict] = field(default_factory=list)
+    #: True when the live pass actually retrieved the tool list (an empty
+    #: ``tools`` then means the server genuinely has none). False when it could
+    #: not be observed — e.g. an HTTP endpoint that gated tools/list behind
+    #: auth — so tool-surface checks report NA rather than a misleading PASS.
+    tools_observed: bool = True
     #: Raw stdout lines that were not valid MCP messages (spec MUST NOT).
     stdout_noise: list[str] = field(default_factory=list)
     #: HTTP probe observations; None for stdio targets.

@@ -54,6 +54,24 @@ class Check(abc.ABC):
         """
 
 
+#: NA reason shared by every tool-list-dependent check when the surface could
+#: not be observed (e.g. an HTTP endpoint that gates tools/list behind auth).
+TOOLS_UNOBSERVABLE_REASON = (
+    "tool list could not be observed - the endpoint gated tools/list behind auth; "
+    "rerun against a reachable or authorized endpoint to assess the tool surface"
+)
+
+
+def tools_unobservable(snapshot: "ServerSnapshot | None") -> bool:
+    """True when a live pass could not retrieve the tool list at all.
+
+    Distinguishes 'the server genuinely has no tools' (PASS) from 'we could not
+    see them' (NA). Only ever True on HTTP, where auth can gate tools/list;
+    stdio snapshots always set ``tools_observed``.
+    """
+    return bool(snapshot and not snapshot.tools and not snapshot.tools_observed)
+
+
 _REGISTRY: list[Check] = []
 
 

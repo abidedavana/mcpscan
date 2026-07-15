@@ -43,7 +43,7 @@ from collections.abc import Iterable, Iterator
 from ..findings import Grounding, Severity, Verdict
 from ..mcpclient import ServerSnapshot
 from ..target import ScanTarget
-from .base import Check, CheckResult, register
+from .base import TOOLS_UNOBSERVABLE_REASON, Check, CheckResult, register, tools_unobservable
 
 # Unambiguous credential shapes. Label, pattern. Order is report order.
 _KNOWN_SIGNATURES: list[tuple[str, re.Pattern[str]]] = [
@@ -218,6 +218,11 @@ class SecretsInToolSurface(Check):
                 locations.append((f"tool[{name}].description", desc))
             for schema_key in ("inputSchema", "outputSchema"):
                 locations.extend(_iter_schema_literals(f"tool[{name}].{schema_key}", tool.get(schema_key)))
+
+        # Nothing at all was observed (e.g. an auth-gated HTTP endpoint returned
+        # no instructions, serverInfo, or tools): NA, not a misleading PASS.
+        if not locations and tools_unobservable(snapshot):
+            return CheckResult(Verdict.NA, TOOLS_UNOBSERVABLE_REASON)
 
         signature_hits, entropy_hits, _ = find_secret_hits(locations)
         if signature_hits:

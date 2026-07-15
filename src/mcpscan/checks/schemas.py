@@ -22,7 +22,7 @@ import re
 from ..findings import Grounding, Severity, Verdict
 from ..mcpclient import ServerSnapshot
 from ..target import ScanTarget
-from .base import Check, CheckResult, register
+from .base import TOOLS_UNOBSERVABLE_REASON, Check, CheckResult, register, tools_unobservable
 
 
 def _schema_problems(schema: object) -> list[str]:
@@ -66,6 +66,8 @@ class InputSchemaValid(Check):
 
     def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
         assert snapshot is not None
+        if tools_unobservable(snapshot):
+            return CheckResult(Verdict.NA, TOOLS_UNOBSERVABLE_REASON)
         if not snapshot.tools:
             return CheckResult(Verdict.PASS, "server declares no tools")
         bad: list[str] = []
@@ -118,6 +120,8 @@ class UnconstrainedInputToSink(Check):
 
     def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
         assert snapshot is not None
+        if tools_unobservable(snapshot):
+            return CheckResult(Verdict.NA, TOOLS_UNOBSERVABLE_REASON)
         flagged: list[str] = []
         sink_tools = 0
         for tool in snapshot.tools:

@@ -215,5 +215,9 @@ def probe_http(target, timeout: float = DEFAULT_TIMEOUT) -> ServerSnapshot:
         instructions=instructions,
         server_info=server_info,
         tools=tools,
+        # The tool surface was observed only if an unauthenticated tools/list
+        # actually returned a result. An auth-gated endpoint yields no tools
+        # to scan, which the tool-surface checks must treat as NA, not PASS.
+        tools_observed=probe.unauth_returned_result,
         http=probe,
     )

@@ -125,9 +125,9 @@ fixtures in [tests/test_http_probe.py](tests/test_http_probe.py).
 
 **HTTP `--live` makes real requests.** Only scan HTTP endpoints you operate or are
 authorized to assess. The requests are non-invasive (read what the server volunteers), but
-they are real network calls. One honesty note: if an HTTP server requires auth, mcpscan
+they are real network calls. If an HTTP server gates `tools/list` behind auth, mcpscan
 can't retrieve its tool list without credentials, so the tool-surface / schema / annotation
-checks report PASS ("no tools observed") rather than a true assessment for that server.
+checks report **NA** ("tool list could not be observed") rather than a misleading PASS.
 
 ## Development
 

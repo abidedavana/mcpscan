@@ -177,6 +177,10 @@ def test_secure_server_live_scan_verdicts():
     assert by_id["mcp_auth_unauthenticated_invocation"].verdict is Verdict.PASS
     assert by_id["mcp_auth_prm_discoverable"].verdict is Verdict.PASS
     assert by_id["mcp_transport_origin_validation"].verdict is Verdict.PASS
+    # Auth gated the tool list, so tool-surface checks are NA, not a false PASS.
+    assert by_id["mcp_schema_inputschema_valid"].verdict is Verdict.NA
+    assert by_id["mcp_tools_capability_annotation_consistency"].verdict is Verdict.NA
+    assert by_id["mcp_secrets_not_in_tool_surface"].verdict is Verdict.NA
 
 
 def test_auth_server_without_prm_fails_prm_check():

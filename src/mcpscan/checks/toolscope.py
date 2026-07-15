@@ -24,7 +24,7 @@ from __future__ import annotations
 from ..findings import Grounding, Severity, Verdict
 from ..mcpclient import ServerSnapshot
 from ..target import ScanTarget
-from .base import Check, CheckResult, register
+from .base import TOOLS_UNOBSERVABLE_REASON, Check, CheckResult, register, tools_unobservable
 from .schemas import _words
 
 # Tokens that unambiguously signal a dangerous capability...
@@ -74,6 +74,8 @@ class AnnotationConsistency(Check):
 
     def run(self, target: ScanTarget, snapshot: ServerSnapshot | None = None) -> CheckResult:
         assert snapshot is not None
+        if tools_unobservable(snapshot):
+            return CheckResult(Verdict.NA, TOOLS_UNOBSERVABLE_REASON)
         failures: list[str] = []
         reviews: list[str] = []
         for tool in snapshot.tools:
